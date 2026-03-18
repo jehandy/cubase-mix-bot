@@ -1,0 +1,21 @@
+{
+  "name": "cubase-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for controlling Cubase 13 Pro via MIDI Remote API",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "install-cubase-script": "node scripts/install-cubase-script.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "jzz": "^1.8.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Claude MCP Bridge",
+  "license": "MIT"
+}
