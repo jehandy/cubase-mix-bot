@@ -165,7 +165,7 @@ page.makeCommandBinding(btnBankNext.mSurfaceValue,  'Navigate', 'Right')
 // Selected Track
 var sel = page.mHostAccess.mTrackSelection.mMixerChannel
 
-page.makeValueBinding(selVolume.mSurfaceValue,    sel.mValue.mVolume)
+var selVolumeBinding = page.makeValueBinding(selVolume.mSurfaceValue, sel.mValue.mVolume)
 page.makeValueBinding(selPan.mSurfaceValue,       sel.mValue.mPan)
 page.makeValueBinding(selMute.mSurfaceValue,      sel.mValue.mMute)
 page.makeValueBinding(selSolo.mSurfaceValue,      sel.mValue.mSolo)
@@ -201,10 +201,61 @@ var bankZone = page.mHostAccess.mMixConsole.makeMixerBankZone()
   .excludeOutputChannels()
   .setFollowVisibility(true)
 
+var bankChannels = []
+var bankVolBindings = []
 for (var i = 0; i < 8; i++) {
   var ch = bankZone.makeMixerBankChannel()
-  page.makeValueBinding(bankFaders[i].mSurfaceValue, ch.mValue.mVolume)
+  bankChannels[i] = ch
+  bankVolBindings[i] = page.makeValueBinding(bankFaders[i].mSurfaceValue, ch.mValue.mVolume)
   page.makeValueBinding(bankPans[i].mSurfaceValue,   ch.mValue.mPan)
   page.makeValueBinding(bankMutes[i].mSurfaceValue,  ch.mValue.mMute)
   page.makeValueBinding(bankSolos[i].mSurfaceValue,  ch.mValue.mSolo)
+}
+
+// ============================================================
+// Track Name SysEx Feedback
+// ============================================================
+// SysEx format: F0 7D 43 4D [msgType] [data...] F7
+// 7D = non-commercial, 43 4D = "CM" (Claude MCP)
+// msgType 0x10 = selected track name
+// msgType 0x11 = bank channel name (byte0 = channel index, rest = name)
+
+function stringToSysex(str) {
+  var bytes = []
+  for (var i = 0; i < str.length; i++) {
+    bytes.push(str.charCodeAt(i) & 0x7F)
+  }
+  return bytes
+}
+
+function sendSysEx(activeDevice, msgType, data) {
+  var msg = [0xF0, 0x7D, 0x43, 0x4D, msgType]
+  for (var i = 0; i < data.length; i++) {
+    msg.push(data[i])
+  }
+  msg.push(0xF7)
+  midiOutput.sendMidi(activeDevice, msg)
+}
+
+// Selected track name: fires whenever the selected track changes
+selVolumeBinding.mOnTitleChange = function (activeDevice, activeMapping, title) {
+  if (title && title.length > 0) {
+    sendSysEx(activeDevice, 0x10, stringToSysex(title))
+  }
+}
+
+// Bank channel names: fire when the bank scrolls or tracks change
+for (var i = 0; i < 8; i++) {
+  ;(function(idx) {
+    bankVolBindings[idx].mOnTitleChange = function (activeDevice, activeMapping, title) {
+      if (title && title.length > 0) {
+        var data = [idx]
+        var nameBytes = stringToSysex(title)
+        for (var j = 0; j < nameBytes.length; j++) {
+          data.push(nameBytes[j])
+        }
+        sendSysEx(activeDevice, 0x11, data)
+      }
+    }
+  })(i)
 }

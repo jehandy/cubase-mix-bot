@@ -15,6 +15,9 @@ import {
   sysExBytesToString,
   SYSEX_MSG
 } from './protocol.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('midi-bridge');
 
 class MidiBridge {
   constructor() {
@@ -22,9 +25,8 @@ class MidiBridge {
     this.input = null;
     this.connected = false;
     this.feedbackValues = {};  // Stores last known values from Cubase
-    this.pendingResponses = new Map(); // For SysEx request/response
-    this.trackNames = {};
-    this.projectInfo = {};
+    this.selectedTrackName = '';  // Auto-pushed from Cubase
+    this.bankChannelNames = {};  // { 0: 'Bass', 1: 'Guitar1', ... }
   }
 
   /**
@@ -38,8 +40,8 @@ class MidiBridge {
       const outputs = jzz.info().outputs;
       const inputs = jzz.info().inputs;
 
-      console.error('[MIDI Bridge] Available outputs:', outputs.map(o => o.name).join(', '));
-      console.error('[MIDI Bridge] Available inputs:', inputs.map(i => i.name).join(', '));
+      log.info(`Available outputs: ${outputs.map(o => o.name).join(', ')}`);
+      log.info(`Available inputs: ${inputs.map(i => i.name).join(', ')}`);
 
       // Try to connect to the specific IAC ports, fall back to any IAC port
       try {
@@ -49,7 +51,7 @@ class MidiBridge {
         const iacOut = outputs.find(o => o.name.includes('IAC'));
         if (iacOut) {
           this.output = await JZZ().openMidiOut(iacOut.name);
-          console.error(`[MIDI Bridge] Connected to output: ${iacOut.name}`);
+          log.info(`Connected to output: ${iacOut.name}`);
         } else {
           throw new Error('No IAC Driver output port found. Please configure IAC Driver in Audio MIDI Setup.');
         }
@@ -61,9 +63,9 @@ class MidiBridge {
         const iacIn = inputs.find(i => i.name.includes('IAC'));
         if (iacIn) {
           this.input = await JZZ().openMidiIn(iacIn.name);
-          console.error(`[MIDI Bridge] Connected to input: ${iacIn.name}`);
+          log.info(`Connected to input: ${iacIn.name}`);
         } else {
-          console.error('[MIDI Bridge] Warning: No IAC input port found. Feedback from Cubase will not be available.');
+          log.warn('No IAC input port found. Feedback from Cubase will not be available.');
         }
       }
 
@@ -73,10 +75,10 @@ class MidiBridge {
       }
 
       this.connected = true;
-      console.error('[MIDI Bridge] Connected to Cubase via IAC Driver');
+      log.info('Connected to Cubase via IAC Driver');
       return true;
     } catch (err) {
-      console.error('[MIDI Bridge] Connection error:', err.message);
+      log.error(`Connection error: ${err.message}`);
       this.connected = false;
       return false;
     }
@@ -105,6 +107,7 @@ class MidiBridge {
       const cc = bytes[1];
       const value = bytes[2];
       this.feedbackValues[cc] = value;
+      log.debug(`Feedback CC ${cc} = ${value}`);
     }
   }
 
@@ -115,26 +118,18 @@ class MidiBridge {
     const { msgType, data } = parsed;
 
     switch (msgType) {
-      case SYSEX_MSG.TRACK_NAME_RESPONSE: {
-        const trackIndex = data[0];
+      // Auto-pushed: selected track name changed
+      case SYSEX_MSG.SELECTED_TRACK_NAME: {
+        this.selectedTrackName = sysExBytesToString(data);
+        log.info(`Selected track: ${this.selectedTrackName}`);
+        break;
+      }
+      // Auto-pushed: bank channel name
+      case SYSEX_MSG.BANK_CHANNEL_NAME: {
+        const chIdx = data[0];
         const name = sysExBytesToString(data.slice(1));
-        this.trackNames[trackIndex] = name;
-        this._resolveResponse(SYSEX_MSG.TRACK_NAME_RESPONSE, { trackIndex, name });
-        break;
-      }
-      case SYSEX_MSG.PROJECT_INFO_RESPONSE: {
-        const infoStr = sysExBytesToString(data);
-        try {
-          this.projectInfo = JSON.parse(infoStr);
-        } catch {
-          this.projectInfo = { raw: infoStr };
-        }
-        this._resolveResponse(SYSEX_MSG.PROJECT_INFO_RESPONSE, this.projectInfo);
-        break;
-      }
-      case SYSEX_MSG.TRACK_COUNT: {
-        const count = data[0] | (data[1] << 7);
-        this._resolveResponse(SYSEX_MSG.TRACK_COUNT, count);
+        this.bankChannelNames[chIdx] = name;
+        log.info(`Bank ch ${chIdx + 1}: ${name}`);
         break;
       }
     }
@@ -149,6 +144,7 @@ class MidiBridge {
     }
     // Control Change on MIDI_CHANNEL
     const statusByte = 0xB0 | MIDI_CHANNEL;
+    log.debug(`Send CC ${cc} = ${value}`);
     this.output.send([statusByte, cc & 0x7F, value & 0x7F]);
   }
 
@@ -160,32 +156,8 @@ class MidiBridge {
       throw new Error('MIDI output not connected. Run setup first.');
     }
     const sysex = buildSysEx(msgType, data);
+    log.debug(`Send SysEx type=0x${msgType.toString(16)} len=${data.length}`);
     this.output.send(sysex);
-  }
-
-  /**
-   * Send a SysEx request and wait for response
-   */
-  async requestSysEx(msgType, data = [], timeout = 2000) {
-    return new Promise((resolve, reject) => {
-      const responseType = msgType + 1; // Convention: response = request + 1
-      const timer = setTimeout(() => {
-        this.pendingResponses.delete(responseType);
-        reject(new Error(`SysEx response timeout for message type ${msgType}`));
-      }, timeout);
-
-      this.pendingResponses.set(responseType, { resolve, timer });
-      this.sendSysEx(msgType, data);
-    });
-  }
-
-  _resolveResponse(msgType, data) {
-    const pending = this.pendingResponses.get(msgType);
-    if (pending) {
-      clearTimeout(pending.timer);
-      this.pendingResponses.delete(msgType);
-      pending.resolve(data);
-    }
   }
 
   /**
@@ -203,8 +175,9 @@ class MidiBridge {
       connected: this.connected,
       outputPort: this.output ? 'Connected' : 'Not connected',
       inputPort: this.input ? 'Connected' : 'Not connected',
+      selectedTrack: this.selectedTrackName || '(unknown)',
+      bankChannels: { ...this.bankChannelNames },
       feedbackValues: { ...this.feedbackValues },
-      trackNames: { ...this.trackNames },
     };
   }
 
@@ -215,7 +188,7 @@ class MidiBridge {
     if (this.output) await this.output.close();
     if (this.input) await this.input.close();
     this.connected = false;
-    console.error('[MIDI Bridge] Disconnected');
+    log.info('Disconnected');
   }
 }
 

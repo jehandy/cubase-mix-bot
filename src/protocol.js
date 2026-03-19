@@ -6,6 +6,10 @@
  * Cubase MIDI Remote script via IAC Driver.
  */
 
+import { createLogger } from './logger.js';
+
+const log = createLogger('protocol');
+
 // All control messages use MIDI Channel 16 (0-indexed: 15)
 export const MIDI_CHANNEL = 15;
 
@@ -75,18 +79,17 @@ export const CC_FOCUSED_QC = [60, 61, 62, 63, 64, 65, 66, 67];
 
 // --- SysEx for string data (track names, project info) ---
 // SysEx manufacturer ID (non-commercial): 0x7D
-export const SYSEX_HEADER = [0xF0, 0x7D, 0x43, 0x4D]; // F0 7D "CM"
+const SYSEX_HEADER = [0xF0, 0x7D, 0x43, 0x4D]; // F0 7D "CM"
 
 export const SYSEX_MSG = {
-  REQUEST_TRACK_NAME:   0x01,
-  TRACK_NAME_RESPONSE:  0x02,
-  REQUEST_PROJECT_INFO: 0x03,
-  PROJECT_INFO_RESPONSE:0x04,
-  TRACK_COUNT:          0x05,
+  // Auto-push from Cubase script (no request needed)
+  SELECTED_TRACK_NAME:  0x10,  // Sent whenever selected track changes
+  BANK_CHANNEL_NAME:    0x11,  // Sent for each bank channel on bank change (byte 0 = channel 0-7)
 };
 
 // Helper to build a SysEx message
 export function buildSysEx(msgType, data = []) {
+  log.debug(`buildSysEx type=0x${msgType.toString(16)} dataLen=${data.length}`);
   return [...SYSEX_HEADER, msgType, ...data, 0xF7];
 }
 
@@ -97,12 +100,8 @@ export function parseSysEx(bytes) {
   }
   const msgType = bytes[4];
   const data = bytes.slice(5, -1); // exclude F7
+  log.debug(`parseSysEx type=0x${msgType.toString(16)} dataLen=${data.length}`);
   return { msgType, data };
-}
-
-// Convert string to 7-bit safe bytes for SysEx
-export function stringToSysExBytes(str) {
-  return Array.from(str).map(c => c.charCodeAt(0) & 0x7F);
 }
 
 // Convert 7-bit SysEx bytes back to string

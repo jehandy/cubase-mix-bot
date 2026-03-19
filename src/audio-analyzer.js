@@ -6,7 +6,10 @@
  * Pure JavaScript - no external audio dependencies.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
+import { createLogger } from './logger.js';
+
+const log = createLogger('audio-analyzer');
 
 /**
  * Parse WAV file header and extract PCM data
@@ -344,7 +347,7 @@ function detectClipping(samples, threshold = 0.99) {
 /**
  * Generate mixing suggestions based on analysis
  */
-function generateSuggestions(spectrum, dynamics, stereo, clipping, format) {
+function generateSuggestions(spectrum, dynamics, stereo, clipping) {
   const suggestions = [];
 
   // Frequency balance suggestions
@@ -493,8 +496,13 @@ function generateSuggestions(spectrum, dynamics, stereo, clipping, format) {
  * Main analysis function - analyzes a WAV file and returns comprehensive report
  */
 export function analyzeAudioFile(filePath) {
+  const fileSize = statSync(filePath).size;
+  log.info(`Analyzing ${filePath} (${(fileSize / 1024 / 1024).toFixed(1)} MB)`);
+  const start = Date.now();
+
   const buffer = readFileSync(filePath);
   const { fmt, channels, numSamples } = parseWav(buffer);
+  log.info(`Parsed WAV: ${fmt.bitsPerSample}-bit/${fmt.sampleRate}Hz/${fmt.numChannels}ch, ${numSamples} samples`);
 
   const duration = numSamples / fmt.sampleRate;
 
@@ -525,7 +533,9 @@ export function analyzeAudioFile(filePath) {
     stereo = analyzeStereoWidth(channels[0], channels[1]);
   }
 
-  const suggestions = generateSuggestions(spectrum, dynamics, stereo, clipping, format);
+  const suggestions = generateSuggestions(spectrum, dynamics, stereo, clipping);
+
+  log.info(`Analysis complete in ${Date.now() - start}ms — ${suggestions.length} suggestion(s)`);
 
   return {
     format,

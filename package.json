@@ -9,7 +9,6 @@
     "install-cubase-script": "node scripts/install-cubase-script.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "jzz": "^1.8.6"
   },

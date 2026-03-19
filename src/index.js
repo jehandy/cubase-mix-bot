@@ -18,6 +18,9 @@ import {
 
 import bridge from './midi-bridge.js';
 import { analyzeAudioFile } from './audio-analyzer.js';
+import { createLogger } from './logger.js';
+
+const log = createLogger('mcp-server');
 import {
   CC_TRANSPORT,
   CC_QUICK_CONTROLS,
@@ -305,6 +308,44 @@ const TOOLS = [
     },
   },
 
+  // === Track Identification ===
+  {
+    name: 'cubase_get_selected_track',
+    description: 'Get the name of the currently selected track in Cubase. The track name is automatically reported by Cubase whenever the selection changes.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'cubase_get_bank_names',
+    description: 'Get the names of all 8 channels in the current mixer bank. Useful for understanding which tracks are visible and navigable.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'cubase_select_track_by_name',
+    description: 'Navigate to a track by name. Searches forward through tracks until the target is found or the list wraps. Uses the auto-reported track name from Cubase for confirmation. Maximum 60 steps to prevent infinite loops.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Track name to search for (case-insensitive partial match)',
+        },
+        maxSteps: {
+          type: 'number',
+          minimum: 1,
+          maximum: 120,
+          description: 'Maximum navigation steps before giving up (default: 60)',
+        },
+      },
+      required: ['name'],
+    },
+  },
+
   // === Focused Quick Controls ===
   {
     name: 'cubase_set_focused_qc',
@@ -333,6 +374,7 @@ const TOOLS = [
 // --- Tool Handlers ---
 
 async function handleTool(name, args) {
+  log.info(`Tool call: ${name} args=${JSON.stringify(args)}`);
   switch (name) {
     // --- Connection ---
     case 'cubase_connect': {
@@ -467,6 +509,65 @@ async function handleTool(name, args) {
       }
     }
 
+    // --- Track Identification ---
+    case 'cubase_get_selected_track': {
+      const trackName = bridge.selectedTrackName || '(unknown - navigate to a track first)';
+      return { content: [{ type: 'text', text: `Selected track: ${trackName}` }] };
+    }
+
+    case 'cubase_get_bank_names': {
+      const names = bridge.bankChannelNames;
+      const lines = [];
+      for (let i = 0; i < 8; i++) {
+        lines.push(`  Ch ${i + 1}: ${names[i] || '(empty)'}`);
+      }
+      return { content: [{ type: 'text', text: `Current bank channels:\n${lines.join('\n')}` }] };
+    }
+
+    case 'cubase_select_track_by_name': {
+      const target = args.name.toLowerCase();
+      const maxSteps = args.maxSteps || 60;
+
+      // Check if already on target
+      if (bridge.selectedTrackName && bridge.selectedTrackName.toLowerCase().includes(target)) {
+        return { content: [{ type: 'text', text: `Already on track: ${bridge.selectedTrackName}` }] };
+      }
+
+      // Navigate forward, checking after each step
+      let found = false;
+      let steps = 0;
+      const visited = new Set();
+
+      for (let i = 0; i < maxSteps; i++) {
+        bridge.sendCC(CC_NAV.TRACK_NEXT, 127);
+        steps++;
+
+        // Wait briefly for Cubase to send back the new track name
+        await new Promise(resolve => setTimeout(resolve, 80));
+
+        const current = bridge.selectedTrackName || '';
+        if (current.toLowerCase().includes(target)) {
+          found = true;
+          break;
+        }
+
+        // Detect if we've looped (same name seen again)
+        if (visited.has(current) && visited.size > 3) {
+          break;
+        }
+        visited.add(current);
+      }
+
+      if (found) {
+        return { content: [{ type: 'text', text: `Found and selected: ${bridge.selectedTrackName} (after ${steps} steps)` }] };
+      } else {
+        return {
+          content: [{ type: 'text', text: `Track "${args.name}" not found after ${steps} steps. Last track seen: ${bridge.selectedTrackName || '(unknown)'}. Try checking the exact track name with cubase_get_bank_names.` }],
+          isError: true,
+        };
+      }
+    }
+
     // --- Quick Controls ---
     case 'cubase_set_quick_control': {
       const ccIdx = args.slot - 1;
@@ -557,17 +658,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  return handleTool(name, args || {});
+  try {
+    const result = await handleTool(name, args || {});
+    if (result.isError) {
+      log.error(`Tool ${name} returned error: ${result.content?.[0]?.text}`);
+    }
+    return result;
+  } catch (err) {
+    log.error(`Tool ${name} threw: ${err.stack || err.message}`);
+    throw err;
+  }
 });
 
 // Start
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[Cubase MCP] Server started. Waiting for commands...');
+  log.info('Server started. Waiting for commands...');
 }
 
 main().catch((err) => {
-  console.error('[Cubase MCP] Fatal error:', err);
+  log.error(`Fatal error: ${err.stack || err.message}`);
   process.exit(1);
 });
