@@ -82,11 +82,6 @@ export const CC_FOCUSED_QC = [60, 61, 62, 63, 64, 65, 66, 67];
 const SYSEX_HEADER = [0xF0, 0x7D, 0x43, 0x4D]; // F0 7D "CM"
 
 export const SYSEX_MSG = {
-  REQUEST_TRACK_NAME:   0x01,
-  TRACK_NAME_RESPONSE:  0x02,
-  REQUEST_PROJECT_INFO: 0x03,
-  PROJECT_INFO_RESPONSE:0x04,
-  TRACK_COUNT:          0x05,
   // Auto-push from Cubase script (no request needed)
   SELECTED_TRACK_NAME:  0x10,  // Sent whenever selected track changes
   BANK_CHANNEL_NAME:    0x11,  // Sent for each bank channel on bank change (byte 0 = channel 0-7)

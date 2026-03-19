@@ -327,7 +327,7 @@ const TOOLS = [
   },
   {
     name: 'cubase_select_track_by_name',
-    description: 'Navigate to a track by name. Searches through tracks by moving next/previous until the target track is found. Uses the auto-reported track name from Cubase for confirmation. Maximum 60 steps to prevent infinite loops.',
+    description: 'Navigate to a track by name. Searches forward through tracks until the target is found or the list wraps. Uses the auto-reported track name from Cubase for confirmation. Maximum 60 steps to prevent infinite loops.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -665,7 +665,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     return result;
   } catch (err) {
-    log.error(`Tool ${name} threw: ${err.message}`);
+    log.error(`Tool ${name} threw: ${err.stack || err.message}`);
     throw err;
   }
 });
@@ -678,6 +678,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  log.error(`Fatal error: ${err.message}`);
+  log.error(`Fatal error: ${err.stack || err.message}`);
   process.exit(1);
 });

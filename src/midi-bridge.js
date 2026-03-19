@@ -25,7 +25,6 @@ class MidiBridge {
     this.input = null;
     this.connected = false;
     this.feedbackValues = {};  // Stores last known values from Cubase
-    this.pendingResponses = new Map(); // For SysEx request/response
     this.selectedTrackName = '';  // Auto-pushed from Cubase
     this.bankChannelNames = {};  // { 0: 'Bass', 1: 'Guitar1', ... }
   }
@@ -159,31 +158,6 @@ class MidiBridge {
     const sysex = buildSysEx(msgType, data);
     log.debug(`Send SysEx type=0x${msgType.toString(16)} len=${data.length}`);
     this.output.send(sysex);
-  }
-
-  /**
-   * Send a SysEx request and wait for response
-   */
-  async requestSysEx(msgType, data = [], timeout = 2000) {
-    return new Promise((resolve, reject) => {
-      const responseType = msgType + 1; // Convention: response = request + 1
-      const timer = setTimeout(() => {
-        this.pendingResponses.delete(responseType);
-        reject(new Error(`SysEx response timeout for message type ${msgType}`));
-      }, timeout);
-
-      this.pendingResponses.set(responseType, { resolve, timer });
-      this.sendSysEx(msgType, data);
-    });
-  }
-
-  _resolveResponse(msgType, data) {
-    const pending = this.pendingResponses.get(msgType);
-    if (pending) {
-      clearTimeout(pending.timer);
-      this.pendingResponses.delete(msgType);
-      pending.resolve(data);
-    }
   }
 
   /**
